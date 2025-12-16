@@ -1,0 +1,62 @@
+{
+  "name": "astro-content-ai-translator",
+  "version": "0.1.0",
+  "description": "Astro integration for AI-powered content translation",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "bin": {
+    "astro-ai-translate": "./lib/cli.js"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "astro",
+    "astro-integration",
+    "i18n",
+    "translation",
+    "ai",
+    "openai",
+    "gpt",
+    "content-collections",
+    "multilingual"
+  ],
+  "author": "Affiliate.FM",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/affiliatefm/astro-content-ai-translator.git"
+  },
+  "homepage": "https://github.com/affiliatefm/astro-content-ai-translator#readme",
+  "bugs": {
+    "url": "https://github.com/affiliatefm/astro-content-ai-translator/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "astro": "^4.0.0 || ^5.0.0"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "openai": "^4.73.0",
+    "glob": "^10.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "astro": "^5.0.0",
+    "typescript": "^5.7.2"
+  }
+}
