@@ -94,12 +94,18 @@ function parseTranslateTo(
   sourceLocale: string,
   config: ResolvedConfig
 ): string[] | false {
+  // No _translateTo field = don't translate
+  if (value === undefined) return false;
+  // Explicitly disabled
   if (value === false) return false;
+  // Translate to specific locales
   if (Array.isArray(value)) return value.filter((l) => l !== sourceLocale);
-  if (value === "all" || value === undefined) {
+  // Translate to all locales
+  if (value === "all") {
     return config.locales.filter((l) => l !== sourceLocale);
   }
-  if (typeof value === "string" && value !== "all") {
+  // Single locale as string
+  if (typeof value === "string") {
     return [value].filter((l) => l !== sourceLocale);
   }
   return false;
@@ -361,26 +367,56 @@ export async function status(config: ResolvedConfig): Promise<void> {
   console.log(`\nLocales: ${config.locales.join(", ")}`);
   console.log(`Default: ${config.defaultLocale}\n`);
 
-  for (const source of sources) {
-    if (source.translateTo === false) {
-      console.log(`${source.relativePath} — no translation`);
-      continue;
-    }
+  // Only show files with explicit _translateTo
+  const filesToTranslate = sources.filter(
+    (s) => s.translateTo !== false && Array.isArray(s.translateTo) && s.translateTo.length > 0
+  );
 
-    const targets = source.translateTo || [];
+  if (filesToTranslate.length === 0) {
+    console.log("No files marked for translation.");
+    console.log("\nTo translate a file, add _translateTo to its frontmatter:");
+    console.log("  _translateTo: [ja, de]");
+    return;
+  }
+
+  for (const source of filesToTranslate) {
+    const targets = source.translateTo as string[];
     const statuses: string[] = [];
 
     for (const locale of targets) {
       const targetPath = getTargetPath(source, locale, config);
       const fullPath = join(config.root, config.contentDir, targetPath);
 
+      // Also check by permalink from alternates
+      const alternates = source.frontmatter.alternates as Record<string, string> | undefined;
+      let found = false;
+      let isAi = false;
+
       if (existsSync(fullPath)) {
+        found = true;
         const raw = readFileSync(fullPath, "utf-8");
         const { data } = matter(raw);
-        const isAi = data._ai ? "ai" : "manual";
-        statuses.push(`${locale}:${isAi}`);
+        isAi = !!data._ai;
+      } else if (alternates?.[locale] && !alternates[locale].startsWith("http")) {
+        // Check if translation exists with different filename (via permalink)
+        const existing = await findFileByPermalink(
+          join(config.root, config.contentDir),
+          locale,
+          alternates[locale],
+          config
+        );
+        if (existing) {
+          found = true;
+          const raw = readFileSync(join(config.root, config.contentDir, existing), "utf-8");
+          const { data } = matter(raw);
+          isAi = !!data._ai;
+        }
+      }
+
+      if (found) {
+        statuses.push(`${locale}:${isAi ? "ai" : "exists"}`);
       } else {
-        statuses.push(`${locale}:missing`);
+        statuses.push(`${locale}:pending`);
       }
     }
 

@@ -32,8 +32,8 @@ _translateTo: [ru, de]
 Options:
 - `_translateTo: [ru, de]` — translate to specific locales
 - `_translateTo: all` — translate to all configured locales
-- `_translateTo: false` — don't translate this file
-- Omit field — defaults to translating to all non-default locales
+- `_translateTo: false` — explicitly don't translate
+- No field — file is not translated (must opt-in)
 
 ## Usage
 
