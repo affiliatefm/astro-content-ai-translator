@@ -18,6 +18,26 @@ import { createInterface } from "node:readline";
 import { translate, status } from "./core.js";
 import type { ResolvedConfig } from "./integration.js";
 
+// Load .env file
+const projectRoot = process.cwd();
+const envPath = join(projectRoot, ".env");
+if (existsSync(envPath)) {
+  const envContent = readFileSync(envPath, "utf-8");
+  for (const line of envContent.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx > 0) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        const value = trimmed.slice(eqIdx + 1).trim();
+        if (!process.env[key]) {
+          process.env[key] = value;
+        }
+      }
+    }
+  }
+}
+
 const args = process.argv.slice(2);
 
 const showHelp = args.includes("--help") || args.includes("-h");
@@ -26,8 +46,6 @@ const showInit = args.includes("init");
 const dryRun = args.includes("--dry-run") || args.includes("-n");
 const force = args.includes("--force") || args.includes("-f");
 const file = args.find((a) => !a.startsWith("-") && a !== "init");
-
-const projectRoot = process.cwd();
 
 // =============================================================================
 // INTERACTIVE HELPERS
@@ -175,7 +193,7 @@ async function init() {
       let newContent = configContent;
       
       if (!newContent.includes('import aiTranslator')) {
-        const importLine = 'import aiTranslator from "astro-content-ai-translator";\n';
+        const importLine = 'import aiTranslator from "@affiliate.fm/astro-content-ai-translator";\n';
         // Add after last import
         const lastImportIdx = newContent.lastIndexOf("import ");
         const lineEnd = newContent.indexOf("\n", lastImportIdx);
