@@ -20,6 +20,7 @@ export interface TranslateOptions {
   file?: string;
   dryRun?: boolean;
   force?: boolean;
+  onProgress?: (progress: TranslationProgress) => void;
 }
 
 export interface TranslationResult {
@@ -28,6 +29,79 @@ export interface TranslationResult {
   locale: string;
   status: "created" | "skipped" | "error";
   error?: string;
+}
+
+export interface TranslationProgress {
+  current: number;
+  total: number;
+  currentFile: string;
+  targetLocale: string;
+  phase: "starting" | "translating" | "writing" | "done";
+}
+
+export interface TranslationEstimate {
+  files: EstimateFile[];
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  estimatedCostUSD: number;
+  model: string;
+}
+
+export interface EstimateFile {
+  source: string;
+  targetLocale: string;
+  inputTokens: number;
+  outputTokens: number;
+  skipped: boolean;
+  skipReason?: string;
+}
+
+// =============================================================================
+// PRICING (USD per 1M tokens)
+// =============================================================================
+
+interface ModelPricing {
+  input: number;  // USD per 1M input tokens
+  output: number; // USD per 1M output tokens
+}
+
+const MODEL_PRICING: Record<string, ModelPricing> = {
+  // GPT-4.1 series (latest)
+  "gpt-4.1": { input: 2.00, output: 8.00 },
+  "gpt-4.1-mini": { input: 0.40, output: 1.60 },
+  "gpt-4.1-nano": { input: 0.10, output: 0.40 },
+  // GPT-4o series
+  "gpt-4o": { input: 2.50, output: 10.00 },
+  "gpt-4o-mini": { input: 0.15, output: 0.60 },
+  // GPT-4 Turbo
+  "gpt-4-turbo": { input: 10.00, output: 30.00 },
+  "gpt-4-turbo-preview": { input: 10.00, output: 30.00 },
+  // GPT-4
+  "gpt-4": { input: 30.00, output: 60.00 },
+  // GPT-3.5
+  "gpt-3.5-turbo": { input: 0.50, output: 1.50 },
+  // Default fallback
+  "default": { input: 5.00, output: 15.00 },
+};
+
+function getModelPricing(model: string): ModelPricing {
+  // Try exact match first
+  if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+  // Try prefix match (e.g., gpt-4o-2024-08-06 -> gpt-4o)
+  for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
+    if (model.startsWith(key)) return pricing;
+  }
+  return MODEL_PRICING["default"];
+}
+
+/**
+ * Estimate tokens from text. 
+ * Rough approximation: ~4 chars per token for English, ~2-3 for other languages.
+ * We use 3.5 as a conservative average.
+ */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5);
 }
 
 interface SourceFile {
@@ -231,6 +305,127 @@ function parseTranslationResponse(
 }
 
 // =============================================================================
+// ESTIMATE FUNCTION
+// =============================================================================
+
+/**
+ * Estimate translation cost before running.
+ */
+export async function estimate(
+  config: ResolvedConfig,
+  options: Pick<TranslateOptions, "file" | "force"> = {}
+): Promise<TranslationEstimate> {
+  const sources = await scanContent(config);
+  const pricing = getModelPricing(config.model);
+
+  // Filter files to process
+  let filesToProcess = sources.filter((s) => s.translateTo !== false);
+  if (options.file) {
+    filesToProcess = filesToProcess.filter(
+      (s) => s.relativePath.includes(options.file!) || basename(s.path).includes(options.file!)
+    );
+  }
+
+  const files: EstimateFile[] = [];
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  for (const source of filesToProcess) {
+    if (!source.translateTo || source.translateTo.length === 0) continue;
+
+    for (const targetLocale of source.translateTo) {
+      const targetRelPath = getTargetPath(source, targetLocale, config);
+      const targetPath = join(config.root, config.contentDir, targetRelPath);
+
+      // Check if exists
+      if (existsSync(targetPath) && !options.force) {
+        files.push({
+          source: source.relativePath,
+          targetLocale,
+          inputTokens: 0,
+          outputTokens: 0,
+          skipped: true,
+          skipReason: "exists",
+        });
+        continue;
+      }
+
+      // Check by permalink
+      const alternates = source.frontmatter.alternates as Record<string, string> | undefined;
+      if (alternates?.[targetLocale] && !alternates[targetLocale].startsWith("http")) {
+        const existing = await findFileByPermalink(
+          join(config.root, config.contentDir),
+          targetLocale,
+          alternates[targetLocale],
+          config
+        );
+        if (existing && !options.force) {
+          files.push({
+            source: source.relativePath,
+            targetLocale,
+            inputTokens: 0,
+            outputTokens: 0,
+            skipped: true,
+            skipReason: "permalink exists",
+          });
+          continue;
+        }
+      }
+
+      // Calculate tokens for this translation
+      const systemPrompt = config.prompt || `You are a professional translator. Translate from ${source.locale} to ${targetLocale}.
+
+Rules:
+- Translate all text naturally and fluently
+- Keep markdown formatting exactly as-is
+- Keep code blocks, URLs, and component tags unchanged
+- Only output the translation, no explanations`;
+
+      const translatableFields = ["title", "description"];
+      let userPrompt = "";
+      
+      for (const field of translatableFields) {
+        if (typeof source.frontmatter[field] === "string") {
+          userPrompt += `${field}: ${source.frontmatter[field]}\n`;
+        }
+      }
+      if (userPrompt) {
+        userPrompt = "FRONTMATTER:\n" + userPrompt + "\nCONTENT:\n";
+      }
+      userPrompt += source.content;
+
+      const inputTokens = estimateTokens(systemPrompt + userPrompt);
+      // Output is typically similar size to content (slightly more for some languages)
+      const outputTokens = Math.ceil(estimateTokens(userPrompt) * 1.2);
+
+      files.push({
+        source: source.relativePath,
+        targetLocale,
+        inputTokens,
+        outputTokens,
+        skipped: false,
+      });
+
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+    }
+  }
+
+  const inputCost = (totalInputTokens / 1_000_000) * pricing.input;
+  const outputCost = (totalOutputTokens / 1_000_000) * pricing.output;
+  const estimatedCostUSD = inputCost + outputCost;
+
+  return {
+    files,
+    totalInputTokens,
+    totalOutputTokens,
+    totalTokens: totalInputTokens + totalOutputTokens,
+    estimatedCostUSD,
+    model: config.model,
+  };
+}
+
+// =============================================================================
 // MAIN FUNCTIONS
 // =============================================================================
 
@@ -265,7 +460,8 @@ export async function translate(
     );
   }
 
-  console.log(`\nFound ${filesToProcess.length} file(s) to process\n`);
+  // Build list of translations to perform
+  const translations: Array<{ source: SourceFile; targetLocale: string; targetRelPath: string; targetPath: string }> = [];
 
   for (const source of filesToProcess) {
     if (!source.translateTo || source.translateTo.length === 0) continue;
@@ -276,7 +472,6 @@ export async function translate(
 
       // Check existing
       if (existsSync(targetPath) && !options.force) {
-        console.log(`  Skip: ${targetRelPath} (exists)`);
         results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "skipped" });
         continue;
       }
@@ -291,22 +486,39 @@ export async function translate(
           config
         );
         if (existing && !options.force) {
-          console.log(`  Skip: ${targetRelPath} (${alternates[targetLocale]} exists)`);
           results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "skipped" });
           continue;
         }
       }
 
       if (options.dryRun) {
-        console.log(`  Would create: ${targetRelPath}`);
         results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "created" });
         continue;
       }
 
-      console.log(`  Translating: ${source.relativePath} → ${targetLocale}...`);
+      translations.push({ source, targetLocale, targetRelPath, targetPath });
+    }
+  }
 
-      try {
-        const translated = await translateContent(source, targetLocale, config, openai!);
+  // Process translations with progress
+  const total = translations.length;
+  let current = 0;
+
+  for (const { source, targetLocale, targetRelPath, targetPath } of translations) {
+    current++;
+    const alternates = source.frontmatter.alternates as Record<string, string> | undefined;
+
+    // Report progress: starting
+    options.onProgress?.({
+      current,
+      total,
+      currentFile: source.relativePath,
+      targetLocale,
+      phase: "translating",
+    });
+
+    try {
+      const translated = await translateContent(source, targetLocale, config, openai!);
 
         // Build output frontmatter
         const outputFrontmatter: Record<string, unknown> = {};
@@ -342,17 +554,34 @@ export async function translate(
 
         const output = matter.stringify(translated.content, outputFrontmatter);
 
+        // Report progress: writing
+        options.onProgress?.({
+          current,
+          total,
+          currentFile: source.relativePath,
+          targetLocale,
+          phase: "writing",
+        });
+
         mkdirSync(dirname(targetPath), { recursive: true });
         writeFileSync(targetPath, output);
 
-        console.log(`  Created: ${targetRelPath}`);
         results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "created" });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`  Error: ${message}`);
         results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "error", error: message });
       }
     }
+
+  // Report progress: done
+  if (total > 0) {
+    options.onProgress?.({
+      current: total,
+      total,
+      currentFile: "",
+      targetLocale: "",
+      phase: "done",
+    });
   }
 
   return results;

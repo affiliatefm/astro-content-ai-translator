@@ -8,6 +8,7 @@ export interface TranslateOptions {
     file?: string;
     dryRun?: boolean;
     force?: boolean;
+    onProgress?: (progress: TranslationProgress) => void;
 }
 export interface TranslationResult {
     source: string;
@@ -15,6 +16,29 @@ export interface TranslationResult {
     locale: string;
     status: "created" | "skipped" | "error";
     error?: string;
+}
+export interface TranslationProgress {
+    current: number;
+    total: number;
+    currentFile: string;
+    targetLocale: string;
+    phase: "starting" | "translating" | "writing" | "done";
+}
+export interface TranslationEstimate {
+    files: EstimateFile[];
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalTokens: number;
+    estimatedCostUSD: number;
+    model: string;
+}
+export interface EstimateFile {
+    source: string;
+    targetLocale: string;
+    inputTokens: number;
+    outputTokens: number;
+    skipped: boolean;
+    skipReason?: string;
 }
 interface SourceFile {
     path: string;
@@ -30,6 +54,10 @@ interface SourceFile {
  * Scan content directory for source files.
  */
 export declare function scanContent(config: ResolvedConfig): Promise<SourceFile[]>;
+/**
+ * Estimate translation cost before running.
+ */
+export declare function estimate(config: ResolvedConfig, options?: Pick<TranslateOptions, "file" | "force">): Promise<TranslationEstimate>;
 /**
  * Translate content files.
  */

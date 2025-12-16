@@ -16,4 +16,4 @@
  */
 export { default } from "./integration.js";
 export type { AiTranslatorOptions, ResolvedConfig } from "./integration.js";
-export { translate, status, type TranslateOptions, type TranslationResult } from "./core.js";
+export { translate, status, estimate, type TranslateOptions, type TranslationResult, type TranslationEstimate, type TranslationProgress, type EstimateFile, } from "./core.js";
