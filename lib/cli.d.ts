@@ -2,11 +2,11 @@
 /**
  * AI Translate CLI
  * =================
- * CLI for astro-content-ai-translator integration.
+ * CLI for astro-content-astro-ai-translator integration.
  *
  * Usage:
- *   npx astro-ai-translate [file] [options]
- *   npx astro-ai-translate init
+ *   npx astro-ai-translator [file] [options]
+ *   npx astro-ai-translator init
  *
  * Reads configuration from astro.config.mjs integration settings.
  */

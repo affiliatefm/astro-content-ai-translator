@@ -2,11 +2,11 @@
 /**
  * AI Translate CLI
  * =================
- * CLI for astro-content-ai-translator integration.
+ * CLI for astro-content-astro-ai-translator integration.
  *
  * Usage:
- *   npx astro-ai-translate [file] [options]
- *   npx astro-ai-translate init
+ *   npx astro-ai-translator [file] [options]
+ *   npx astro-ai-translator init
  *
  * Reads configuration from astro.config.mjs integration settings.
  */
@@ -139,7 +139,7 @@ async function loadConfig(): Promise<ResolvedConfig> {
   
   if (astroConfig?.integrations) {
     for (const integration of astroConfig.integrations) {
-      if (integration?.name === "astro-content-ai-translator") {
+      if (integration?.name === "astro-content-astro-ai-translator") {
         // Integration was called, options are in closure - can't access directly
         // User should set options via environment or config file
         break;
@@ -181,7 +181,7 @@ async function init() {
 
   // Check if integration already added
   const configContent = readFileSync(join(projectRoot, configFile), "utf-8");
-  const hasIntegration = configContent.includes("astro-content-ai-translator");
+  const hasIntegration = configContent.includes("astro-content-astro-ai-translator");
 
   if (hasIntegration) {
     console.log("✅ Integration already configured in astro.config\n");
@@ -193,11 +193,19 @@ async function init() {
       let newContent = configContent;
       
       if (!newContent.includes('import aiTranslator')) {
-        const importLine = 'import aiTranslator from "@affiliate.fm/astro-content-ai-translator";\n';
-        // Add after last import
-        const lastImportIdx = newContent.lastIndexOf("import ");
-        const lineEnd = newContent.indexOf("\n", lastImportIdx);
-        newContent = newContent.slice(0, lineEnd + 1) + importLine + newContent.slice(lineEnd + 1);
+        const importLine = 'import aiTranslator from "@affiliate.fm/astro-content-astro-ai-translator";';
+        // Find last top-level import (starts at beginning of line)
+        const lines = newContent.split("\n");
+        let lastImportLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith("import ")) {
+            lastImportLine = i;
+          }
+        }
+        if (lastImportLine >= 0) {
+          lines.splice(lastImportLine + 1, 0, importLine);
+          newContent = lines.join("\n");
+        }
       }
 
       // Add to integrations array
@@ -205,11 +213,11 @@ async function init() {
       if (integrationsMatch) {
         const existing = integrationsMatch[1].trim();
         const newIntegrations = existing
-          ? `${existing},\n    aiTranslator(),`
-          : "aiTranslator(),";
+          ? `${existing}, aiTranslator()`
+          : "aiTranslator()";
         newContent = newContent.replace(
           /integrations:\s*\[([^\]]*)\]/,
-          `integrations: [\n    ${newIntegrations}\n  ]`
+          `integrations: [${newIntegrations}]`
         );
       }
 
@@ -267,10 +275,10 @@ Setup complete! Next steps:
    ---
 
 2. Run translation:
-   npx astro-ai-translate
+   npx astro-ai-translator
 
 3. Check status:
-   npx astro-ai-translate --status
+   npx astro-ai-translator --status
 `);
 }
 
@@ -284,8 +292,8 @@ async function main() {
 Astro AI Translate - AI translation for content collections
 
 Usage:
-  npx astro-ai-translate [file] [options]
-  npx astro-ai-translate init
+  npx astro-ai-translator [file] [options]
+  npx astro-ai-translator init
 
 Commands:
   init            Interactive setup wizard
@@ -305,10 +313,10 @@ In source files, add:
   _translateTo: false      # Don't translate
 
 Examples:
-  npx astro-ai-translate init              # Setup wizard
-  npx astro-ai-translate                   # Translate all missing
-  npx astro-ai-translate about.mdx         # Translate specific file
-  npx astro-ai-translate --status          # Show what's translated
+  npx astro-ai-translator init              # Setup wizard
+  npx astro-ai-translator                   # Translate all missing
+  npx astro-ai-translator about.mdx         # Translate specific file
+  npx astro-ai-translator --status          # Show what's translated
 `);
     return;
   }

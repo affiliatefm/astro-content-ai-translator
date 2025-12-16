@@ -5,29 +5,19 @@ Astro integration for AI-powered content translation using OpenAI.
 ## Installation
 
 ```bash
-npx astro add @affiliate.fm/astro-content-ai-translator
-```
-
-Or manually:
-
-```bash
 npm install @affiliate.fm/astro-content-ai-translator
-npx astro-ai-translate init
+npx astro-ai-translator init
 ```
 
-## Quick Start
-
-### 1. Run setup wizard
-
-```bash
-npx astro-ai-translate init
-```
-
-This will:
+The setup wizard will:
 - Add integration to your `astro.config.mjs`
 - Set up your OpenAI API key in `.env`
 
-### 2. Mark files for translation
+Alternatively, use `npx astro add @affiliate.fm/astro-content-ai-translator`.
+
+## Quick Start
+
+### 1. Mark files for translation
 
 In your content files, add `_translateTo` to frontmatter:
 
@@ -50,31 +40,31 @@ Options:
 ### Translate missing content
 
 ```bash
-npx astro-ai-translate
+npx astro-ai-translator
 ```
 
 ### Translate specific file
 
 ```bash
-npx astro-ai-translate about.mdx
+npx astro-ai-translator about.mdx
 ```
 
 ### Check status
 
 ```bash
-npx astro-ai-translate --status
+npx astro-ai-translator --status
 ```
 
 ### Preview (dry run)
 
 ```bash
-npx astro-ai-translate --dry-run
+npx astro-ai-translator --dry-run
 ```
 
 ### Force overwrite
 
 ```bash
-npx astro-ai-translate --force
+npx astro-ai-translator --force
 ```
 
 ## Generated files
