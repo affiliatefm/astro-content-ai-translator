@@ -1,5 +1,5 @@
 {
-  "name": "astro-content-ai-translator",
+  "name": "@affiliate.fm/astro-content-ai-translator",
   "version": "0.1.0",
   "description": "Astro integration for AI-powered content translation",
   "type": "module",

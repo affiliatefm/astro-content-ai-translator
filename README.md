@@ -5,13 +5,13 @@ Astro integration for AI-powered content translation using OpenAI.
 ## Installation
 
 ```bash
-npx astro add astro-content-ai-translator
+npx astro add @affiliate.fm/astro-content-ai-translator
 ```
 
 Or manually:
 
 ```bash
-npm install astro-content-ai-translator
+npm install @affiliate.fm/astro-content-ai-translator
 npx astro-ai-translate init
 ```
 
