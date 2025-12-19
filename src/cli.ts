@@ -13,7 +13,6 @@
 
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import { translate, status, estimate } from "./core.js";
 import type { ResolvedConfig } from "./integration.js";
@@ -200,63 +199,85 @@ class ProgressBar {
 }
 
 async function loadConfig(): Promise<ResolvedConfig> {
-  // Try to load astro.config to get integration options
+  // Find astro.config file
   const configPaths = ["astro.config.mjs", "astro.config.js", "astro.config.ts"];
   
-  let astroConfig: any = null;
+  let configContent = "";
   
-  for (const configFile of configPaths) {
-    const configPath = join(projectRoot, configFile);
+  for (const file of configPaths) {
+    const configPath = join(projectRoot, file);
     if (existsSync(configPath)) {
-      try {
-        // Dynamic import of astro config
-        const configUrl = pathToFileURL(configPath).href;
-        const module = await import(configUrl);
-        astroConfig = module.default;
-        break;
-      } catch (e) {
-        // Config may have imports that don't resolve, try parsing manually
-      }
+      configContent = readFileSync(configPath, "utf-8");
+      break;
     }
   }
 
-  // Extract i18n from astro config
+  if (!configContent) {
+    throw new Error(
+      "No astro.config found.\n\n" +
+      "Run this command in an Astro project directory.\n"
+    );
+  }
+
+  // Parse i18n config from astro.config using regex
   let locales: string[] = [];
   let defaultLocale = "en";
   
-  if (astroConfig?.i18n) {
-    locales = astroConfig.i18n.locales?.map((l: string | { path: string }) =>
-      typeof l === "string" ? l : l.path
-    ) || [];
-    defaultLocale = astroConfig.i18n.defaultLocale || locales[0] || "en";
-  }
-
-  // Try to read from site.ts if no astro i18n config
-  if (locales.length === 0) {
-    const siteConfigPaths = ["src/data/site.ts", "src/data/site.js", "src/config/site.ts", "src/config/site.js"];
+  // Match i18n block: i18n: { ... }
+  const i18nMatch = configContent.match(/i18n:\s*\{([^}]+)\}/s);
+  
+  if (i18nMatch) {
+    const i18nBlock = i18nMatch[1];
     
-    for (const configFile of siteConfigPaths) {
-      const configPath = join(projectRoot, configFile);
-      if (existsSync(configPath)) {
-        const content = readFileSync(configPath, "utf-8");
-        
-        const localesMatch = content.match(/export\s+const\s+locales\s*=\s*\[([^\]]+)\]/);
-        const defaultMatch = content.match(/export\s+const\s+defaultLocale\s*=\s*["']([^"']+)["']/);
-        
-        if (localesMatch) {
-          locales = localesMatch[1]
-            .match(/["']([^"']+)["']/g)
-            ?.map((s) => s.replace(/["']/g, "")) || [];
-          defaultLocale = defaultMatch?.[1] || locales[0] || "en";
-          break;
-        }
+    // Extract locales - can be:
+    // 1. locales: ["en", "ru"]  - direct array
+    // 2. locales: [...languages] - spread
+    // 3. locales,  - shorthand property (variable reference)
+    const localesArrayMatch = i18nBlock.match(/locales:\s*\[([^\]]+)\]/);
+    const localesShorthand = i18nBlock.match(/\blocales\s*,/);
+    
+    if (localesArrayMatch) {
+      const localesContent = localesArrayMatch[1].trim();
+      
+      // Check if it's a spread like [...languages]
+      const spreadMatch = localesContent.match(/\.\.\.(\w+)/);
+      if (spreadMatch) {
+        locales = resolveVariable(configContent, spreadMatch[1], projectRoot);
+      } else {
+        // Direct array literal: ['en', 'ru']
+        locales = localesContent
+          .match(/["']([^"']+)["']/g)
+          ?.map((s) => s.replace(/["']/g, "")) || [];
       }
+    } else if (localesShorthand) {
+      // Shorthand: i18n: { locales, ... } - look for const locales = [...]
+      locales = resolveVariable(configContent, "locales", projectRoot);
+    }
+    
+    // Extract defaultLocale - can be:
+    // 1. defaultLocale: "en" - string literal
+    // 2. defaultLocale: defaultLanguage - variable
+    // 3. defaultLocale, - shorthand
+    const defaultArrayMatch = i18nBlock.match(/defaultLocale:\s*(\w+|["'][^"']+["'])/);
+    const defaultShorthand = i18nBlock.match(/\bdefaultLocale\s*,/);
+    
+    if (defaultArrayMatch) {
+      const val = defaultArrayMatch[1];
+      if (val.startsWith('"') || val.startsWith("'")) {
+        defaultLocale = val.replace(/["']/g, "");
+      } else {
+        const resolved = resolveVariableString(configContent, val, projectRoot);
+        if (resolved) defaultLocale = resolved;
+      }
+    } else if (defaultShorthand) {
+      const resolved = resolveVariableString(configContent, "defaultLocale", projectRoot);
+      if (resolved) defaultLocale = resolved;
     }
   }
 
   if (locales.length === 0) {
     throw new Error(
-      "No locales found.\n\n" +
+      "No locales found in astro.config.\n\n" +
       "Configure i18n in astro.config.mjs:\n" +
       "  i18n: {\n" +
       "    locales: ['en', 'ru', 'de'],\n" +
@@ -265,20 +286,7 @@ async function loadConfig(): Promise<ResolvedConfig> {
     );
   }
 
-  // Find integration options from astro config
-  let integrationOptions: any = {};
-  
-  if (astroConfig?.integrations) {
-    for (const integration of astroConfig.integrations) {
-      if (integration?.name === "astro-content-astro-ai-translator") {
-        // Integration was called, options are in closure - can't access directly
-        // User should set options via environment or config file
-        break;
-      }
-    }
-  }
-
-  // Check for options in environment or simple config
+  // Check for options in environment
   const model = process.env.AI_TRANSLATE_MODEL || "gpt-4.1";
   const contentDir = process.env.AI_TRANSLATE_CONTENT_DIR || "src/content/pages";
 
@@ -290,6 +298,128 @@ async function loadConfig(): Promise<ResolvedConfig> {
     defaultLocale,
     root: projectRoot,
   };
+}
+
+/**
+ * Resolve a variable that should be an array of strings.
+ * Follows imports recursively to find the actual value.
+ * @param content - File content to search in
+ * @param varName - Variable name to find
+ * @param fileDir - Directory of the current file (for resolving relative imports)
+ */
+function resolveVariable(content: string, varName: string, fileDir: string): string[] {
+  // First, check if defined as array in this file
+  const localMatch = content.match(
+    new RegExp(`(?:const|let|var)\\s+${varName}\\s*=\\s*\\[([^\\]]+)\\]`)
+  );
+  if (localMatch) {
+    return localMatch[1]
+      .match(/["']([^"']+)["']/g)
+      ?.map((s) => s.replace(/["']/g, "")) || [];
+  }
+
+  // Check if it's a re-export: export const languages = locales;
+  const reExportMatch = content.match(
+    new RegExp(`(?:export\\s+)?const\\s+${varName}\\s*=\\s*(\\w+)\\s*;`)
+  );
+  if (reExportMatch && reExportMatch[1] !== varName) {
+    // It references another variable, resolve that one
+    return resolveVariable(content, reExportMatch[1], fileDir);
+  }
+
+  // Check if it's imported from another file
+  const importRegex = new RegExp(
+    `import\\s*\\{[^}]*\\b${varName}\\b[^}]*\\}\\s*from\\s*["']([^"']+)["']`
+  );
+  const importMatch = content.match(importRegex);
+  
+  if (importMatch) {
+    const importPath = importMatch[1];
+    const resolvedPath = resolveImportPath(importPath, fileDir);
+    
+    if (resolvedPath && existsSync(resolvedPath)) {
+      const importedContent = readFileSync(resolvedPath, "utf-8");
+      const importedDir = join(resolvedPath, "..");
+      
+      // Recursively resolve in the imported file
+      return resolveVariable(importedContent, varName, importedDir);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Resolve a variable that should be a string.
+ */
+function resolveVariableString(content: string, varName: string, fileDir: string): string | null {
+  // Check if defined as string in this file
+  const localMatch = content.match(
+    new RegExp(`(?:const|let|var)\\s+${varName}\\s*=\\s*["']([^"']+)["']`)
+  );
+  if (localMatch) {
+    return localMatch[1];
+  }
+
+  // Check if it's a re-export
+  const reExportMatch = content.match(
+    new RegExp(`(?:export\\s+)?const\\s+${varName}\\s*=\\s*(\\w+)\\s*;`)
+  );
+  if (reExportMatch && reExportMatch[1] !== varName) {
+    return resolveVariableString(content, reExportMatch[1], fileDir);
+  }
+
+  // Check if it's imported
+  const importRegex = new RegExp(
+    `import\\s*\\{[^}]*\\b${varName}\\b[^}]*\\}\\s*from\\s*["']([^"']+)["']`
+  );
+  const importMatch = content.match(importRegex);
+  
+  if (importMatch) {
+    const importPath = importMatch[1];
+    const resolvedPath = resolveImportPath(importPath, fileDir);
+    
+    if (resolvedPath && existsSync(resolvedPath)) {
+      const importedContent = readFileSync(resolvedPath, "utf-8");
+      const importedDir = join(resolvedPath, "..");
+      
+      return resolveVariableString(importedContent, varName, importedDir);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve an import path to an absolute file path.
+ */
+function resolveImportPath(importPath: string, fromDir: string): string | null {
+  // Handle relative paths
+  if (importPath.startsWith("./") || importPath.startsWith("../")) {
+    let resolved = join(fromDir, importPath);
+    
+    // If path exists as-is, return it
+    if (existsSync(resolved)) {
+      return resolved;
+    }
+    
+    // Try with extensions
+    for (const ext of [".ts", ".js", ".mjs"]) {
+      if (existsSync(resolved + ext)) {
+        return resolved + ext;
+      }
+    }
+    
+    // Try index files
+    for (const ext of [".ts", ".js", ".mjs"]) {
+      const indexPath = join(resolved, `index${ext}`);
+      if (existsSync(indexPath)) {
+        return indexPath;
+      }
+    }
+  }
+  
+  return null;
 }
 
 // =============================================================================
