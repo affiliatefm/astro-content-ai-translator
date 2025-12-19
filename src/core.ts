@@ -708,8 +708,9 @@ function getPermalink(source: SourceFile): string {
   if (typeof source.frontmatter.permalink === "string") {
     return source.frontmatter.permalink;
   }
-  // Use filename without extension
-  return basename(source.path).replace(/\.(mdx?|md)$/, "");
+  // Use filename without extension, but index files get empty permalink (homepage)
+  const filename = basename(source.path).replace(/\.(mdx?|md)$/, "");
+  return filename === "index" ? "" : filename;
 }
 
 /**
