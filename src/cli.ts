@@ -233,7 +233,7 @@ async function loadConfig(): Promise<ResolvedConfig> {
 
   // Try to read from site.ts if no astro i18n config
   if (locales.length === 0) {
-    const siteConfigPaths = ["src/config/site.ts", "src/config/site.js"];
+    const siteConfigPaths = ["src/data/site.ts", "src/data/site.js", "src/config/site.ts", "src/config/site.js"];
     
     for (const configFile of siteConfigPaths) {
       const configPath = join(projectRoot, configFile);
