@@ -290,6 +290,9 @@ async function loadConfig(): Promise<ResolvedConfig> {
   const model = process.env.AI_TRANSLATE_MODEL || "gpt-4.1";
   const contentDir = process.env.AI_TRANSLATE_CONTENT_DIR || "src/content/pages";
 
+  // Check for updateAlternates option
+  const updateAlternates = process.env.AI_TRANSLATE_UPDATE_ALTERNATES !== "false";
+
   return {
     model,
     contentDir,
@@ -297,6 +300,7 @@ async function loadConfig(): Promise<ResolvedConfig> {
     locales,
     defaultLocale,
     root: projectRoot,
+    updateAlternates,
   };
 }
 
@@ -661,17 +665,38 @@ Examples:
   const created = results.filter((r) => r.status === "created").length;
   const skipped = results.filter((r) => r.status === "skipped").length;
   const errors = results.filter((r) => r.status === "error").length;
+  
+  // Count files with updated alternates
+  const alternatesUpdatedFiles = new Set<string>();
+  for (const r of results) {
+    if (r.alternatesUpdated) {
+      for (const f of r.alternatesUpdated) {
+        alternatesUpdatedFiles.add(f);
+      }
+    }
+  }
 
   console.log("\n  ─────────────────────────────────────────────────────────────");
   console.log("  📊 RESULTS");
   console.log("  ─────────────────────────────────────────────────────────────");
   console.log(`  ✅ Created:  ${created}`);
   console.log(`  ⏭️  Skipped:  ${skipped}`);
+  if (alternatesUpdatedFiles.size > 0) {
+    console.log(`  🔗 Alternates updated: ${alternatesUpdatedFiles.size}`);
+  }
   if (errors > 0) {
     console.log(`  ❌ Errors:   ${errors}`);
     console.log("\n  Failed translations:");
     for (const r of results.filter((r) => r.status === "error")) {
       console.log(`     • ${r.source} → ${r.locale}: ${r.error}`);
+    }
+  }
+  
+  // Show which files had alternates updated
+  if (alternatesUpdatedFiles.size > 0) {
+    console.log("\n  📝 Source files updated with alternates:");
+    for (const f of alternatesUpdatedFiles) {
+      console.log(`     ↳ ${f}`);
     }
   }
   console.log("  ─────────────────────────────────────────────────────────────\n");

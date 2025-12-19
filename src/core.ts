@@ -29,6 +29,8 @@ export interface TranslationResult {
   locale: string;
   status: "created" | "skipped" | "error";
   error?: string;
+  /** Files that had their alternates updated */
+  alternatesUpdated?: string[];
 }
 
 export interface TranslationProgress {
@@ -526,12 +528,43 @@ export async function translate(
         for (const [key, value] of Object.entries(source.frontmatter)) {
           if (key.startsWith("_")) continue;
           if (key === "title" || key === "description") continue;
+          // Skip alternates - we'll rebuild it
+          if (key === "alternates") continue;
           outputFrontmatter[key] = value;
         }
 
-        // Add permalink from alternates
+        // Get permalink for translated file
+        const sourcePermalink = getPermalink(source);
+        let targetPermalink = sourcePermalink;
+        
+        // Use alternate permalink if specified in source
         if (alternates?.[targetLocale] && !alternates[targetLocale].startsWith("http")) {
-          outputFrontmatter.permalink = alternates[targetLocale];
+          targetPermalink = alternates[targetLocale];
+        }
+        outputFrontmatter.permalink = targetPermalink;
+
+        // Build alternates for translated file
+        if (config.updateAlternates) {
+          const newAlternates: Record<string, string> = {};
+          
+          // Copy existing alternates from source (except external URLs)
+          if (alternates) {
+            for (const [loc, link] of Object.entries(alternates)) {
+              if (!link.startsWith("http")) {
+                newAlternates[loc] = link;
+              }
+            }
+          }
+          
+          // Add source locale if not present
+          if (!newAlternates[source.locale]) {
+            newAlternates[source.locale] = sourcePermalink;
+          }
+          
+          // Add target locale
+          newAlternates[targetLocale] = targetPermalink;
+          
+          outputFrontmatter.alternates = newAlternates;
         }
 
         // Add translated fields
@@ -566,7 +599,22 @@ export async function translate(
         mkdirSync(dirname(targetPath), { recursive: true });
         writeFileSync(targetPath, output);
 
-        results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "created" });
+        // Update alternates in source file
+        const alternatesUpdated: string[] = [];
+        if (config.updateAlternates) {
+          const sourceUpdated = updateFileAlternates(source.path, targetLocale, targetPermalink);
+          if (sourceUpdated) {
+            alternatesUpdated.push(source.relativePath);
+          }
+        }
+
+        results.push({ 
+          source: source.relativePath, 
+          target: targetRelPath, 
+          locale: targetLocale, 
+          status: "created",
+          alternatesUpdated: alternatesUpdated.length > 0 ? alternatesUpdated : undefined,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         results.push({ source: source.relativePath, target: targetRelPath, locale: targetLocale, status: "error", error: message });
@@ -651,6 +699,50 @@ export async function status(config: ResolvedConfig): Promise<void> {
 
     console.log(`${source.relativePath} → ${statuses.join(", ")}`);
   }
+}
+
+/**
+ * Get the permalink for a file (from frontmatter or filename).
+ */
+function getPermalink(source: SourceFile): string {
+  if (typeof source.frontmatter.permalink === "string") {
+    return source.frontmatter.permalink;
+  }
+  // Use filename without extension
+  return basename(source.path).replace(/\.(mdx?|md)$/, "");
+}
+
+/**
+ * Update alternates in a file's frontmatter.
+ * Returns true if file was modified.
+ */
+function updateFileAlternates(
+  filePath: string,
+  locale: string,
+  permalink: string
+): boolean {
+  if (!existsSync(filePath)) return false;
+
+  const raw = readFileSync(filePath, "utf-8");
+  const { data: frontmatter, content } = matter(raw);
+
+  // Get or create alternates object
+  const alternates = (frontmatter.alternates || {}) as Record<string, string>;
+
+  // Check if already has this locale
+  if (alternates[locale] === permalink) {
+    return false;
+  }
+
+  // Add the new alternate
+  alternates[locale] = permalink;
+  frontmatter.alternates = alternates;
+
+  // Write back
+  const output = matter.stringify(content, frontmatter);
+  writeFileSync(filePath, output);
+
+  return true;
 }
 
 async function findFileByPermalink(

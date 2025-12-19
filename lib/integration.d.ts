@@ -30,6 +30,12 @@ export interface AiTranslatorOptions {
      * Custom translation prompt.
      */
     prompt?: string;
+    /**
+     * Update alternates in source and translated files.
+     * When true, adds hreflang links between original and translated pages.
+     * @default true
+     */
+    updateAlternates?: boolean;
 }
 export interface ResolvedConfig {
     model: string;
@@ -38,6 +44,7 @@ export interface ResolvedConfig {
     locales: string[];
     defaultLocale: string;
     root: string;
+    updateAlternates: boolean;
 }
 export declare function getResolvedConfig(): ResolvedConfig | null;
 export declare function setResolvedConfig(config: ResolvedConfig): void;

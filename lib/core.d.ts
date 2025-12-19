@@ -16,6 +16,8 @@ export interface TranslationResult {
     locale: string;
     status: "created" | "skipped" | "error";
     error?: string;
+    /** Files that had their alternates updated */
+    alternatesUpdated?: string[];
 }
 export interface TranslationProgress {
     current: number;

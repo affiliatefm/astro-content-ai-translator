@@ -34,6 +34,13 @@ export interface AiTranslatorOptions {
    * Custom translation prompt.
    */
   prompt?: string;
+
+  /**
+   * Update alternates in source and translated files.
+   * When true, adds hreflang links between original and translated pages.
+   * @default true
+   */
+  updateAlternates?: boolean;
 }
 
 export interface ResolvedConfig {
@@ -43,6 +50,7 @@ export interface ResolvedConfig {
   locales: string[];
   defaultLocale: string;
   root: string;
+  updateAlternates: boolean;
 }
 
 // Store resolved config for CLI access
@@ -82,6 +90,7 @@ export default function aiTranslator(options: AiTranslatorOptions = {}): AstroIn
           locales,
           defaultLocale,
           root: config.root.pathname,
+          updateAlternates: options.updateAlternates !== false,
         });
 
         // Log setup info
