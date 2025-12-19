@@ -632,6 +632,22 @@ export async function translate(
     });
   }
 
+  // Sync alternates across all locale versions
+  if (config.updateAlternates && results.some(r => r.status === "created")) {
+    const syncedFiles = await syncAlternatesAcrossLocales(config, results);
+    
+    // Add synced files to the last result's alternatesUpdated
+    if (syncedFiles.length > 0 && results.length > 0) {
+      const lastCreated = results.filter(r => r.status === "created").pop();
+      if (lastCreated) {
+        lastCreated.alternatesUpdated = [
+          ...(lastCreated.alternatesUpdated || []),
+          ...syncedFiles.filter(f => !lastCreated.alternatesUpdated?.includes(f))
+        ];
+      }
+    }
+  }
+
   return results;
 }
 
@@ -744,6 +760,102 @@ function updateFileAlternates(
   writeFileSync(filePath, output);
 
   return true;
+}
+
+/**
+ * Sync alternates across all locale versions of a page.
+ * After translations, each locale version should know about all others.
+ */
+async function syncAlternatesAcrossLocales(
+  config: ResolvedConfig,
+  results: TranslationResult[]
+): Promise<string[]> {
+  const updatedFiles: string[] = [];
+  const contentDir = join(config.root, config.contentDir);
+  
+  // Group results by source file (base path)
+  const sourceGroups = new Map<string, Set<string>>();
+  
+  for (const result of results) {
+    if (result.status !== "created") continue;
+    
+    // Get the base source path (without locale prefix)
+    const sourcePath = result.source;
+    if (!sourceGroups.has(sourcePath)) {
+      sourceGroups.set(sourcePath, new Set());
+    }
+    sourceGroups.get(sourcePath)!.add(result.locale);
+  }
+  
+  // For each source that had translations created
+  for (const [sourcePath, newLocales] of sourceGroups) {
+    // Read source file to get its alternates
+    const sourceFullPath = join(contentDir, sourcePath);
+    if (!existsSync(sourceFullPath)) continue;
+    
+    const sourceRaw = readFileSync(sourceFullPath, "utf-8");
+    const { data: sourceFm } = matter(sourceRaw);
+    const sourceAlternates = (sourceFm.alternates || {}) as Record<string, string>;
+    
+    // Collect all known alternates (from source)
+    const allAlternates: Record<string, string> = { ...sourceAlternates };
+    
+    // Find all locale versions of this page and collect their alternates
+    const sourceLocale = getLocaleFromPath(sourcePath, config);
+    const baseFileName = sourcePath.replace(new RegExp(`^${sourceLocale}/`), "");
+    
+    for (const locale of config.locales) {
+      const localePath = locale === config.defaultLocale 
+        ? baseFileName 
+        : `${locale}/${baseFileName}`;
+      const fullPath = join(contentDir, localePath);
+      
+      if (existsSync(fullPath)) {
+        const raw = readFileSync(fullPath, "utf-8");
+        const { data: fm } = matter(raw);
+        const alts = (fm.alternates || {}) as Record<string, string>;
+        
+        // Merge alternates
+        for (const [loc, link] of Object.entries(alts)) {
+          if (!allAlternates[loc] && !link.startsWith("http")) {
+            allAlternates[loc] = link;
+          }
+        }
+      }
+    }
+    
+    // Now update all locale versions with the complete alternates
+    for (const locale of config.locales) {
+      const localePath = locale === config.defaultLocale 
+        ? baseFileName 
+        : `${locale}/${baseFileName}`;
+      const fullPath = join(contentDir, localePath);
+      
+      if (!existsSync(fullPath)) continue;
+      
+      const raw = readFileSync(fullPath, "utf-8");
+      const { data: fm, content } = matter(raw);
+      const currentAlts = (fm.alternates || {}) as Record<string, string>;
+      
+      // Check if we need to update
+      let needsUpdate = false;
+      for (const [loc, link] of Object.entries(allAlternates)) {
+        if (currentAlts[loc] !== link) {
+          needsUpdate = true;
+          break;
+        }
+      }
+      
+      if (needsUpdate) {
+        fm.alternates = { ...currentAlts, ...allAlternates };
+        const output = matter.stringify(content, fm);
+        writeFileSync(fullPath, output);
+        updatedFiles.push(localePath);
+      }
+    }
+  }
+  
+  return updatedFiles;
 }
 
 async function findFileByPermalink(
