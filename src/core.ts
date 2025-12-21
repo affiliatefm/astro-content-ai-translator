@@ -944,6 +944,7 @@ function getPermalink(source: SourceFile): string {
 
 /**
  * Update alternates in a file's frontmatter.
+ * Only updates if the file ALREADY HAS alternates field.
  * Returns true if file was modified.
  */
 function updateFileAlternates(
@@ -956,8 +957,12 @@ function updateFileAlternates(
   const raw = readFileSync(filePath, "utf-8");
   const { data: frontmatter } = matter(raw);
 
-  // Get or create alternates object
-  const alternates = (frontmatter.alternates || {}) as Record<string, string>;
+  // Only update if alternates already exist - don't create new ones
+  if (!frontmatter.alternates) {
+    return false;
+  }
+
+  const alternates = frontmatter.alternates as Record<string, string>;
 
   // Check if already has this locale
   if (alternates[locale] === permalink) {
@@ -980,6 +985,7 @@ function updateFileAlternates(
 
 /**
  * Sync alternates across all locale versions of a page.
+ * Only syncs files that ALREADY HAVE alternates in their frontmatter.
  * After translations, each locale version should know about all others.
  */
 async function syncAlternatesAcrossLocales(
@@ -1011,7 +1017,11 @@ async function syncAlternatesAcrossLocales(
     
     const sourceRaw = readFileSync(sourceFullPath, "utf-8");
     const { data: sourceFm } = matter(sourceRaw);
-    const sourceAlternates = (sourceFm.alternates || {}) as Record<string, string>;
+    
+    // Only sync if source file HAS alternates - don't create new ones
+    if (!sourceFm.alternates) continue;
+    
+    const sourceAlternates = sourceFm.alternates as Record<string, string>;
     
     // Collect all known alternates (from source)
     const allAlternates: Record<string, string> = { ...sourceAlternates };
@@ -1029,18 +1039,21 @@ async function syncAlternatesAcrossLocales(
       if (existsSync(fullPath)) {
         const raw = readFileSync(fullPath, "utf-8");
         const { data: fm } = matter(raw);
-        const alts = (fm.alternates || {}) as Record<string, string>;
         
-        // Merge alternates
-        for (const [loc, link] of Object.entries(alts)) {
-          if (!allAlternates[loc] && !link.startsWith("http")) {
-            allAlternates[loc] = link;
+        // Only collect from files that have alternates
+        if (fm.alternates) {
+          const alts = fm.alternates as Record<string, string>;
+          // Merge alternates
+          for (const [loc, link] of Object.entries(alts)) {
+            if (!allAlternates[loc] && !link.startsWith("http")) {
+              allAlternates[loc] = link;
+            }
           }
         }
       }
     }
     
-    // Now update all locale versions with the complete alternates
+    // Now update locale versions that ALREADY HAVE alternates
     for (const locale of config.locales) {
       const localePath = locale === config.defaultLocale 
         ? baseFileName 
@@ -1051,7 +1064,11 @@ async function syncAlternatesAcrossLocales(
       
       const raw = readFileSync(fullPath, "utf-8");
       const { data: fm } = matter(raw);
-      const currentAlts = (fm.alternates || {}) as Record<string, string>;
+      
+      // Only update files that already have alternates
+      if (!fm.alternates) continue;
+      
+      const currentAlts = fm.alternates as Record<string, string>;
       
       // Check if we need to update
       let needsUpdate = false;
