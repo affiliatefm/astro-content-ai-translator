@@ -47,6 +47,8 @@ interface SourceFile {
     relativePath: string;
     locale: string;
     frontmatter: Record<string, unknown>;
+    /** Raw frontmatter string (including --- delimiters) for structure preservation */
+    rawFrontmatter: string;
     content: string;
     raw: string;
     hash: string;

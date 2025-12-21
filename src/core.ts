@@ -111,10 +111,253 @@ interface SourceFile {
   relativePath: string;
   locale: string;
   frontmatter: Record<string, unknown>;
+  /** Raw frontmatter string (including --- delimiters) for structure preservation */
+  rawFrontmatter: string;
   content: string;
   raw: string;
   hash: string;
   translateTo: string[] | false;
+}
+
+// =============================================================================
+// FRONTMATTER STRUCTURE PRESERVATION
+// =============================================================================
+
+interface FrontmatterLine {
+  type: "comment" | "field" | "empty" | "continuation";
+  raw: string;
+  key?: string;
+  value?: string;
+  indent?: number;
+}
+
+/**
+ * Parse frontmatter preserving structure (comments, order, formatting).
+ */
+function parseFrontmatterStructure(raw: string): FrontmatterLine[] {
+  const lines: FrontmatterLine[] = [];
+  const rawLines = raw.split("\n");
+  
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    const trimmed = line.trim();
+    
+    if (trimmed === "") {
+      lines.push({ type: "empty", raw: line });
+    } else if (trimmed.startsWith("#")) {
+      lines.push({ type: "comment", raw: line });
+    } else {
+      // Check if it's a key: value or continuation
+      const match = line.match(/^(\s*)([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)/);
+      if (match) {
+        const [, indent, key, value] = match;
+        lines.push({
+          type: "field",
+          raw: line,
+          key,
+          value: value.trim(),
+          indent: indent.length,
+        });
+      } else {
+        // Continuation line (for multiline values, arrays, etc.)
+        lines.push({
+          type: "continuation",
+          raw: line,
+          indent: line.length - line.trimStart().length,
+        });
+      }
+    }
+  }
+  
+  return lines;
+}
+
+/**
+ * Extract raw frontmatter string from file (including --- delimiters).
+ */
+function extractRawFrontmatter(raw: string): string {
+  const match = raw.match(/^---\n([\s\S]*?)\n---/);
+  return match ? match[1] : "";
+}
+
+/**
+ * Build translated frontmatter preserving source structure.
+ * 
+ * - Keeps all comments and field order from source
+ * - Replaces translatable fields (title, description) with translations
+ * - Removes private fields (starting with _)
+ * - Adds _ai-translator metadata where _translateTo was (same position)
+ * 
+ * @param sourceRawFm - Raw frontmatter from source file
+ * @param sourceFm - Parsed frontmatter object from source
+ * @param translatedFields - Translated field values (title, description)
+ * @param aiMetadata - AI metadata to add
+ */
+function buildTranslatedFrontmatter(
+  sourceRawFm: string,
+  sourceFm: Record<string, unknown>,
+  translatedFields: Record<string, string>,
+  aiMetadata: Record<string, unknown>,
+): string {
+  const lines = parseFrontmatterStructure(sourceRawFm);
+  const result: string[] = [];
+  
+  let aiMetadataAdded = false;
+  let i = 0;
+  
+  while (i < lines.length) {
+    const line = lines[i];
+    
+    if (line.type === "comment") {
+      result.push(line.raw);
+      i++;
+      continue;
+    }
+    
+    if (line.type === "empty") {
+      result.push(line.raw);
+      i++;
+      continue;
+    }
+    
+    if (line.type === "field" && line.key) {
+      const key = line.key;
+      
+      // Private fields (starting with _) - skip but add _ai-translator in place of _translateTo
+      if (key.startsWith("_")) {
+        // If this is _translateTo, add _ai-translator in its place
+        if (key === "_translateTo" && !aiMetadataAdded) {
+          aiMetadataAdded = true;
+          result.push(`_ai-translator:`);
+          for (const [k, v] of Object.entries(aiMetadata)) {
+            result.push(`  ${k}: ${v}`);
+          }
+        }
+        // Skip this field and its continuations
+        i++;
+        while (i < lines.length && lines[i].type === "continuation") {
+          i++;
+        }
+        continue;
+      }
+      
+      // Check if this field should be replaced with translation
+      if (key in translatedFields && translatedFields[key]) {
+        // Output translated value
+        const translatedValue = translatedFields[key];
+        // Simple single-line values
+        if (!translatedValue.includes("\n")) {
+          result.push(`${key}: ${translatedValue}`);
+        } else {
+          // Multiline value - use >-
+          result.push(`${key}: >-`);
+          for (const valueLine of translatedValue.split("\n")) {
+            result.push(`  ${valueLine}`);
+          }
+        }
+        // Skip original continuations
+        i++;
+        while (i < lines.length && lines[i].type === "continuation") {
+          i++;
+        }
+      } else {
+        // Keep original field as-is
+        result.push(line.raw);
+        i++;
+        // Include continuation lines
+        while (i < lines.length && lines[i].type === "continuation") {
+          result.push(lines[i].raw);
+          i++;
+        }
+      }
+    } else if (line.type === "continuation") {
+      // Orphan continuation (shouldn't happen normally)
+      result.push(line.raw);
+      i++;
+    } else {
+      i++;
+    }
+  }
+  
+  // If _translateTo wasn't found, add _ai-translator at the end
+  if (!aiMetadataAdded) {
+    result.push(`_ai-translator:`);
+    for (const [k, v] of Object.entries(aiMetadata)) {
+      result.push(`  ${k}: ${v}`);
+    }
+  }
+  
+  return result.join("\n");
+}
+
+/**
+ * Update a specific field in frontmatter while preserving structure.
+ * - If field exists, updates it in place
+ * - If field doesn't exist, adds it at the end
+ * Returns the new file content or null if no change needed.
+ */
+function updateFrontmatterField(
+  raw: string,
+  fieldName: string,
+  newValue: unknown,
+): string | null {
+  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return null;
+  
+  const rawFm = fmMatch[1];
+  const content = raw.slice(fmMatch[0].length);
+  const lines = parseFrontmatterStructure(rawFm);
+  const result: string[] = [];
+  
+  let fieldUpdated = false;
+  
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    
+    if (line.type === "field" && line.key === fieldName) {
+      // Replace this field in place
+      fieldUpdated = true;
+      if (typeof newValue === "object" && newValue !== null) {
+        result.push(`${fieldName}:`);
+        for (const [k, v] of Object.entries(newValue)) {
+          if (typeof v === "string") {
+            result.push(`  ${k}: ${v.startsWith("http") ? `'${v}'` : v}`);
+          } else {
+            result.push(`  ${k}: ${JSON.stringify(v)}`);
+          }
+        }
+      } else {
+        result.push(`${fieldName}: ${newValue}`);
+      }
+      // Skip original continuations
+      i++;
+      while (i < lines.length && lines[i].type === "continuation") {
+        i++;
+      }
+    } else {
+      result.push(line.raw);
+      i++;
+    }
+  }
+  
+  // If field wasn't found, add it at the end
+  if (!fieldUpdated) {
+    if (typeof newValue === "object" && newValue !== null) {
+      result.push(`${fieldName}:`);
+      for (const [k, v] of Object.entries(newValue)) {
+        if (typeof v === "string") {
+          result.push(`  ${k}: ${v.startsWith("http") ? `'${v}'` : v}`);
+        } else {
+          result.push(`  ${k}: ${JSON.stringify(v)}`);
+        }
+      }
+    } else {
+      result.push(`${fieldName}: ${newValue}`);
+    }
+  }
+  
+  return `---\n${result.join("\n")}\n---${content}`;
 }
 
 // =============================================================================
@@ -142,11 +385,15 @@ export async function scanContent(config: ResolvedConfig): Promise<SourceFile[]>
     // Determine translateTo
     const translateTo = parseTranslateTo(frontmatter._translateTo, locale, config);
 
+    // Extract raw frontmatter for structure preservation
+    const rawFrontmatter = extractRawFrontmatter(raw);
+
     sources.push({
       path: filePath,
       relativePath,
       locale,
       frontmatter,
+      rawFrontmatter,
       content: content.trim(),
       raw,
       hash: hashContent(raw),
@@ -522,70 +769,27 @@ export async function translate(
     try {
       const translated = await translateContent(source, targetLocale, config, openai!);
 
-        // Build output frontmatter
-        const outputFrontmatter: Record<string, unknown> = {};
-
-        for (const [key, value] of Object.entries(source.frontmatter)) {
-          if (key.startsWith("_")) continue;
-          if (key === "title" || key === "description") continue;
-          // Skip alternates - we'll rebuild it
-          if (key === "alternates") continue;
-          outputFrontmatter[key] = value;
-        }
-
-        // Get permalink for translated file
-        const sourcePermalink = getPermalink(source);
-        let targetPermalink = sourcePermalink;
-        
-        // Use alternate permalink if specified in source
-        if (alternates?.[targetLocale] && !alternates[targetLocale].startsWith("http")) {
-          targetPermalink = alternates[targetLocale];
-        }
-        outputFrontmatter.permalink = targetPermalink;
-
-        // Build alternates for translated file
-        if (config.updateAlternates) {
-          const newAlternates: Record<string, string> = {};
-          
-          // Copy existing alternates from source (except external URLs)
-          if (alternates) {
-            for (const [loc, link] of Object.entries(alternates)) {
-              if (!link.startsWith("http")) {
-                newAlternates[loc] = link;
-              }
-            }
-          }
-          
-          // Add source locale if not present
-          if (!newAlternates[source.locale]) {
-            newAlternates[source.locale] = sourcePermalink;
-          }
-          
-          // Add target locale
-          newAlternates[targetLocale] = targetPermalink;
-          
-          outputFrontmatter.alternates = newAlternates;
-        }
-
-        // Add translated fields
-        for (const [key, value] of Object.entries(translated.frontmatter)) {
-          if (value) outputFrontmatter[key] = value;
-        }
-
-        // Fallback
-        if (!outputFrontmatter.title && source.frontmatter.title) {
-          outputFrontmatter.title = source.frontmatter.title;
-        }
-
-        // Add AI metadata
-        outputFrontmatter._ai = {
+        // Build AI metadata
+        const aiMetadata = {
           source: source.relativePath,
           hash: source.hash,
           model: config.model,
           date: new Date().toISOString().split("T")[0],
         };
 
-        const output = matter.stringify(translated.content, outputFrontmatter);
+        // Build translated frontmatter preserving source structure
+        const translatedFm = buildTranslatedFrontmatter(
+          source.rawFrontmatter,
+          source.frontmatter,
+          {
+            ...translated.frontmatter,
+            // Fallback to source title if not translated
+            title: translated.frontmatter.title || (source.frontmatter.title as string) || "",
+          },
+          aiMetadata,
+        );
+
+        const output = `---\n${translatedFm}\n---\n\n${translated.content}`;
 
         // Report progress: writing
         options.onProgress?.({
@@ -602,6 +806,13 @@ export async function translate(
         // Update alternates in source file
         const alternatesUpdated: string[] = [];
         if (config.updateAlternates) {
+          // Calculate target permalink for alternates update
+          const sourcePermalink = getPermalink(source);
+          let targetPermalink = sourcePermalink;
+          if (alternates?.[targetLocale] && !alternates[targetLocale].startsWith("http")) {
+            targetPermalink = alternates[targetLocale];
+          }
+          
           const sourceUpdated = updateFileAlternates(source.path, targetLocale, targetPermalink);
           if (sourceUpdated) {
             alternatesUpdated.push(source.relativePath);
@@ -689,7 +900,7 @@ export async function status(config: ResolvedConfig): Promise<void> {
         found = true;
         const raw = readFileSync(fullPath, "utf-8");
         const { data } = matter(raw);
-        isAi = !!data._ai;
+        isAi = !!data["_ai-translator"];
       } else if (alternates?.[locale] && !alternates[locale].startsWith("http")) {
         // Check if translation exists with different filename (via permalink)
         const existing = await findFileByPermalink(
@@ -702,7 +913,7 @@ export async function status(config: ResolvedConfig): Promise<void> {
           found = true;
           const raw = readFileSync(join(config.root, config.contentDir, existing), "utf-8");
           const { data } = matter(raw);
-          isAi = !!data._ai;
+          isAi = !!data["_ai-translator"];
         }
       }
 
@@ -741,7 +952,7 @@ function updateFileAlternates(
   if (!existsSync(filePath)) return false;
 
   const raw = readFileSync(filePath, "utf-8");
-  const { data: frontmatter, content } = matter(raw);
+  const { data: frontmatter } = matter(raw);
 
   // Get or create alternates object
   const alternates = (frontmatter.alternates || {}) as Record<string, string>;
@@ -752,14 +963,17 @@ function updateFileAlternates(
   }
 
   // Add the new alternate
-  alternates[locale] = permalink;
-  frontmatter.alternates = alternates;
+  const newAlternates = { ...alternates, [locale]: permalink };
 
-  // Write back
-  const output = matter.stringify(content, frontmatter);
-  writeFileSync(filePath, output);
+  // Use structure-preserving update
+  const updated = updateFrontmatterField(raw, "alternates", newAlternates);
+  
+  if (updated) {
+    writeFileSync(filePath, updated);
+    return true;
+  }
 
-  return true;
+  return false;
 }
 
 /**
@@ -834,7 +1048,7 @@ async function syncAlternatesAcrossLocales(
       if (!existsSync(fullPath)) continue;
       
       const raw = readFileSync(fullPath, "utf-8");
-      const { data: fm, content } = matter(raw);
+      const { data: fm } = matter(raw);
       const currentAlts = (fm.alternates || {}) as Record<string, string>;
       
       // Check if we need to update
@@ -847,10 +1061,12 @@ async function syncAlternatesAcrossLocales(
       }
       
       if (needsUpdate) {
-        fm.alternates = { ...currentAlts, ...allAlternates };
-        const output = matter.stringify(content, fm);
-        writeFileSync(fullPath, output);
-        updatedFiles.push(localePath);
+        const newAlternates = { ...currentAlts, ...allAlternates };
+        const updated = updateFrontmatterField(raw, "alternates", newAlternates);
+        if (updated) {
+          writeFileSync(fullPath, updated);
+          updatedFiles.push(localePath);
+        }
       }
     }
   }
