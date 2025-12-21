@@ -133,6 +133,8 @@ interface FrontmatterLine {
 
 /**
  * Parse frontmatter preserving structure (comments, order, formatting).
+ * Only top-level (non-indented) key: value pairs are recognized as fields.
+ * Indented lines are continuations (nested objects, arrays, multiline values).
  */
 function parseFrontmatterStructure(raw: string): FrontmatterLine[] {
   const lines: FrontmatterLine[] = [];
@@ -147,19 +149,19 @@ function parseFrontmatterStructure(raw: string): FrontmatterLine[] {
     } else if (trimmed.startsWith("#")) {
       lines.push({ type: "comment", raw: line });
     } else {
-      // Check if it's a key: value or continuation
-      const match = line.match(/^(\s*)([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)/);
+      // Check if it's a TOP-LEVEL key: value (no leading whitespace)
+      const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)/);
       if (match) {
-        const [, indent, key, value] = match;
+        const [, key, value] = match;
         lines.push({
           type: "field",
           raw: line,
           key,
           value: value.trim(),
-          indent: indent.length,
+          indent: 0,
         });
       } else {
-        // Continuation line (for multiline values, arrays, etc.)
+        // Continuation line (indented content: nested objects, arrays, multiline values)
         lines.push({
           type: "continuation",
           raw: line,
