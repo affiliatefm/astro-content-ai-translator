@@ -176,8 +176,8 @@ Generated `ru/about.mdx` will have `permalink: o-nas`.
 
 ## Related
 
-- [website-core-template](https://github.com/affiliatefm/website-core-template) — i18n-ready Astro starter template
-- [astro-content-ai-enhancer](https://github.com/affiliatefm/astro-content-ai-enhancer) — AI assistant that enhances raw Markdown into structured, well-formatted pages
+- [website-core-template](https://affiliate.fm/tools/website-core-template/) — i18n-ready Astro starter template
+- [astro-content-ai-enhancer](https://affiliate.fm/tools/astro-content-ai-enhancer/) — AI assistant that enhances raw Markdown into structured, well-formatted pages
 
 ## Author
 
