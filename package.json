@@ -1,6 +1,6 @@
 {
   "name": "@affiliate.fm/astro-content-ai-translator",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Astro integration for AI-powered content translation",
   "type": "module",
   "main": "./lib/index.js",
@@ -39,7 +39,7 @@
     "type": "git",
     "url": "git+https://github.com/affiliatefm/astro-content-ai-translator.git"
   },
-  "homepage": "https://github.com/affiliatefm/astro-content-ai-translator#readme",
+  "homepage": "https://affiliate.fm/tools/astro-content-ai-translator/",
   "bugs": {
     "url": "https://github.com/affiliatefm/astro-content-ai-translator/issues"
   },
